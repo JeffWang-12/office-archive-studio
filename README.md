@@ -4,7 +4,7 @@
 
 项目原创代码及原创说明文档采用 [MIT License](LICENSE) 开源。[GitHub 仓库](https://github.com/JeffWang-12/office-archive-studio)仅公开程序源码，字体、规范 PDF/Word 原件及包含它们的旧安装包不公开。第三方依赖保留各自许可，详见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-## 开源代码版 v2.1.0
+## 开源代码版 v2.2.0
 
 公开版本只提供源码及源码压缩包，不附带字体或规范原件。没有这些文件也可运行、检查、修正和导出 DOCX；需要的排版字体由使用者自行在本机安装。
 
@@ -43,6 +43,8 @@ powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -Python .\.venv\Scrip
 - 历史记录可勾选、Ctrl / Shift 多选、全选当前搜索结果并批量删除。
 - 自定义文本格式规范：分别设置主标题、各级标题、正文、落款等的字体、字号、固定行距、缩进、对齐及纸张、页边距；支持 JSON 导入导出，记录保存规范快照。
 - 原生档案生成页：年度 / 月份封皮、计划、总结、文化导航申报表七类模板；动态任务、目录和活动明细编辑、2–3 张照片排版、草稿自动保存和备份恢复、自定义模板识别。
+- 生成页采用“顶部文档类型 / 执行规范、中部完整滚动表单、底部固定操作”的布局；逐条编辑总结、目标和措施，提供今天按钮、数字输入限制与金额千位分隔。
+- 一键输出时间戳与项目名组成的独立文件，可选择并记忆输出目录；支持另存、记忆文档类型、旧版草稿导入导出及生成后的提交审核清单。
 - 按需嵌入允许嵌入的字体，遵循 OOXML 字体密钥字节序，缺失或禁止嵌入的字体会给出提示；保留模板字体名称。
 - 后台线程处理，关闭窗口退出；同一数据目录使用文件锁避免重复实例。
 
@@ -59,6 +61,7 @@ DOCX 修正不依赖 Office。旧版转换和 PDF 导出需要可用的 Word/WPS
 | `app/engine.py` | 真实 DOCX 格式检查、修正和内容校验 |
 | `app/profiles.py`、`app/profile_ui.py` | 自定义文本规范与原生编辑器 |
 | `app/generation.py`、`app/generation_ui.py`、`app/generator/` | 本机资源库、草稿、原生生成表单和 DOCX 生成 |
+| `app/generator_fields.py`、`app/generator_media.py` | 条目、任务、日期、数字、照片和活动表格控件 |
 | `app/platform.py`、`scripts/office.ps1` | 字体检测、Office 转换 |
 | `scripts/build.ps1` | Windows 打包入口 |
 | `scripts/package_release.py` | 发行目录、源码包、依赖许可 |

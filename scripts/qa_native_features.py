@@ -17,7 +17,7 @@ from app.theme import STYLE
 
 
 def main():
-    root = Path('.build/qa-native-features-v210').resolve()
+    root = Path('.build/qa-native-features-v220').resolve()
     root.mkdir(parents=True, exist_ok=True)
     app = QApplication([])
     app.setStyle('Fusion')
@@ -95,7 +95,7 @@ def main():
     page.templates.setCurrentText('月份档案封皮')
     page.templates.setCurrentText('年度工作计划')
     assert page.fields['comprehensive_work'][1].value()[0]['description'] == '整理档案'
-    page.tabs.setCurrentIndex(1)
+    page.scroll.ensureWidgetVisible(tasks)
     app.processEvents()
     window.grab().save(str(root / 'generator-tasks.png'))
 
@@ -105,12 +105,13 @@ def main():
     original_save = QFileDialog.getSaveFileName
     QFileDialog.getSaveFileName = lambda *args, **kwargs: (str(destination), 'Word 文档 (*.docx)')
     try:
-        page.generate()
+        page.generate_as()
         wait()
     finally:
         QFileDialog.getSaveFileName = original_save
     assert destination.is_file()
-    assert page.open_button.isEnabled()
+    assert len(page.success_dialog.checklist) == 6
+    page.success_dialog.close()
     assert len(store.jobs) == 2
     app.processEvents()
     window.grab().save(str(root / 'generator-cover.png'))

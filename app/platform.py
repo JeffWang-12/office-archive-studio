@@ -98,7 +98,7 @@ def environment():
                 pass
     font_list = font_catalog(resource_root() / 'assets' / 'fonts', installed)
     return {'os': 'Windows' if os.name == 'nt' else sys.platform, 'office': office,
-            'fonts': font_list, 'local': True, 'version': '2.1.0', 'canConvert': bool(office)}
+            'fonts': font_list, 'local': True, 'version': '2.2.0', 'canConvert': bool(office)}
 
 
 def office_convert(source, output, mode='docx', application=None):

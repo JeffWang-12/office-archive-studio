@@ -13,6 +13,12 @@ QLabel#statNumber { font-size: 28px; color: #3c6047; font-weight: 500; }
 QLabel#amberNumber { font-size: 28px; color: #a08045; font-weight: 500; }
 QLabel#status { color: #638056; padding: 8px 10px; background: #edf3e7; border-radius: 5px; }
 QFrame#card { background: white; border: 1px solid #e0e6dc; border-radius: 9px; }
+QFrame#taskCard { background: #fbfcf8; border: 1px solid #e1e8da; border-radius: 7px; }
+QLabel#required { color: #ab493e; font-weight: 600; }
+QLabel#warning { color: #9a6138; background: #fff6e7; padding: 10px; border-radius: 5px; }
+QMenu { background: #fff; border: 1px solid #d9e1d2; padding: 5px; }
+QMenu::item { padding: 8px 18px; }
+QMenu::item:selected { background: #edf3e6; }
 QFrame#statCard { background: white; border: 1px solid #e0e6dc; border-radius: 8px; }
 QFrame#dropArea { background: #eff4e9; border: 1px dashed #adbe9c; border-radius: 8px; }
 QFrame#dropArea[dragging="true"] { background: #e0ecd7; border: 2px dashed #668c53; }

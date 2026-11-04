@@ -1,12 +1,14 @@
 """Local resource library, draft persistence and native generator service."""
 from copy import deepcopy
+from datetime import datetime
 import json
+import os
 from pathlib import Path
 import shutil
 import uuid
 
 from .engine import Package, DocumentError
-from .generator.generator_core import load_template_catalog, load_config, generate_document, AUTO_FONT
+from .generator.generator_core import load_template_catalog, load_config, generate_document, AUTO_FONT, _safe_filename
 from .generator.template_guard import restore_standard_templates, version_is_outdated
 from .platform import resource_root
 
@@ -16,14 +18,23 @@ class GeneratorLibrary:
         self.root = Path(data_root) / 'generator'
         self.root.mkdir(parents=True, exist_ok=True)
         self.draft_path = self.root / 'drafts.json'
+        self.preferences_path = self.root / 'preferences.json'
+        self.preferences = {}
+        if self.preferences_path.is_file():
+            try:
+                raw = json.loads(self.preferences_path.read_text(encoding='utf-8-sig'))
+                if isinstance(raw, dict):
+                    self.preferences = raw
+            except (OSError, ValueError):
+                pass
         self.drafts = {}
         self.auto_save = True
         self.draft_warning = ''
-        if not (self.root / '.initialized').exists():
-            bundled = resource_root() / 'assets/generator'
-            if (bundled / 'templates').is_dir():
-                self.import_resources(bundled)
-            (self.root / '.initialized').write_text('1', encoding='utf-8')
+        # Reconcile missing resources on upgrade, including an earlier source-only
+        # installation. Existing templates/fonts and drafts are never overwritten.
+        bundled = resource_root() / 'assets/generator'
+        if (bundled / 'templates').is_dir():
+            self.import_resources(bundled)
         for path in (self.draft_path, self.draft_path.with_suffix('.bak')):
             if not path.is_file():
                 continue
@@ -38,6 +49,21 @@ class GeneratorLibrary:
                 break
             except (OSError, ValueError, AttributeError):
                 self.draft_warning = '草稿文件无法读取，原文件已保留'
+        self.auto_save = bool(self.preferences.get('autoSave', self.auto_save))
+
+    @staticmethod
+    def _atomic_json(path, value):
+        temporary = path.with_suffix('.tmp')
+        with temporary.open('w', encoding='utf-8') as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+
+    def remember(self, **settings):
+        values = {**self.preferences, **settings}
+        self._atomic_json(self.preferences_path, values)
+        self.preferences = values
 
     def import_resources(self, source):
         source = Path(source).resolve()
@@ -97,19 +123,84 @@ class GeneratorLibrary:
         shutil.copyfile(path, target)
         return target
 
+    def replace_custom_template(self, path):
+        path = Path(path)
+        Package(path.read_bytes(), path.name)
+        from .generator.template_guard import check_template
+        check_template(self.root, path)
+        destination = self.root / '模板.docx'
+        if destination.resolve() == path.resolve():
+            return destination
+        temporary = self.root / 'custom-template.tmp'
+        shutil.copyfile(path, temporary)
+        if destination.is_file():
+            shutil.copyfile(destination, self.root / '自定义模板备份.docx')
+        temporary.replace(destination)
+        return destination
+
     def restore(self):
         return restore_standard_templates(self.root)
 
     def save_draft(self, name, values):
+        self.drafts[name] = deepcopy(values)
         if self.auto_save:
-            self.drafts[name] = deepcopy(values)
             self.persist()
+
+    def set_auto_save(self, enabled):
+        if not enabled:
+            self._remove_saved_drafts()
+        self.remember(autoSave=bool(enabled))
+        self.auto_save = bool(enabled)
+        if enabled:
+            self.persist()
+
+    def _remove_saved_drafts(self):
+        for path in (self.draft_path, self.draft_path.with_suffix('.bak'), self.draft_path.with_suffix('.tmp')):
+            path.unlink(missing_ok=True)
+
+    def clear_drafts(self, name=None):
+        values = {} if name is None else {k: v for k, v in self.drafts.items() if k != name}
+        self._remove_saved_drafts()
+        self.drafts = values
+        if self.auto_save:
+            self.persist()
+
+    @staticmethod
+    def read_drafts(path):
+        path = Path(path)
+        if path.stat().st_size > 5 * 1024 * 1024:
+            raise DocumentError('草稿文件不能超过 5 MB')
+        raw = json.loads(path.read_text(encoding='utf-8-sig'))
+        values = raw.get('drafts', raw) if isinstance(raw, dict) else None
+        if not isinstance(values, dict) or len(values) > 100:
+            raise DocumentError('草稿格式不正确')
+        for name, fields in values.items():
+            if not isinstance(name, str) or not isinstance(fields, dict) or len(fields) > 100:
+                raise DocumentError('草稿中的文档类型或字段格式不正确')
+        return values
+
+    def import_drafts(self, values):
+        merged = {**self.drafts, **deepcopy(values)}
+        previous = self.drafts
+        self.drafts = merged
+        try:
+            if self.auto_save:
+                self.persist()
+        except OSError:
+            self.drafts = previous
+            raise
+
+    def export_drafts(self, path):
+        self._atomic_json(Path(path), {'drafts': self.drafts, 'schemaVersion': 1})
 
     def persist(self):
         payload = json.dumps({'autoSave': self.auto_save, 'drafts': self.drafts}, ensure_ascii=False, indent=2)
         json.loads(payload)
         temp = self.draft_path.with_suffix('.tmp')
-        temp.write_text(payload, encoding='utf-8')
+        with temp.open('w', encoding='utf-8') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
         if self.draft_path.is_file():
             try:
                 json.loads(self.draft_path.read_text(encoding='utf-8'))
@@ -118,11 +209,27 @@ class GeneratorLibrary:
                 pass
         temp.replace(self.draft_path)
 
-    def generate(self, name, values, destination, embed=False):
+    @property
+    def output_directory(self):
+        value = self.preferences.get('outputDirectory')
+        return Path(value).expanduser().resolve() if value else self.root.parent / '输出文档'
+
+    def next_output_path(self, project_name):
+        folder = self.output_directory
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + _safe_filename(project_name)
+        candidate = folder / (stem + '.docx')
+        index = 2
+        while candidate.exists():
+            candidate = folder / (stem + f'_{index}.docx')
+            index += 1
+        return candidate
+
+    def generate(self, name, values, destination=None, embed=False):
         spec = self.catalog().get(name)
         if not spec:
             raise DocumentError('模板不存在，请刷新模板库')
-        destination = Path(destination).resolve()
+        destination = Path(destination).resolve() if destination is not None else self.next_output_path(values.get('project_name') or name)
         inputs = {Path(spec['path']).resolve(), *[Path(p).resolve() for p in values.get('photo_paths', [])]}
         if destination in inputs or destination.is_relative_to(self.root.resolve()):
             raise DocumentError('请选择模板库以外的保存位置，不能覆盖模板或照片')

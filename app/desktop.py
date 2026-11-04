@@ -32,7 +32,7 @@ from .profiles import ProfileStore, standard_for
 from .profile_ui import StandardsDialog
 from .generation_ui import GenerationPage
 
-VERSION = '2.1.0'
+VERSION = '2.2.0'
 ROLE_CHOICES = {k: v for k, v in LABELS.items() if k not in ('blank', 'table', 'object')}
 
 
@@ -306,6 +306,7 @@ class MainWindow(QMainWindow):
         self.env = environment()
         self.active_id = None
         self.busy = False
+        self._restoring_page = True
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
         self.workers = []
@@ -332,6 +333,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.build_history())
         self.generation = GenerationPage(self)
         self.pages.addWidget(self.generation)
+        preferred_page = self.generation.library.preferences.get('lastPage', 4 if self.generation.catalog else 0)
         v.addWidget(self.pages, 1)
         h.addWidget(shell, 1)
         self.progress = QProgressBar()
@@ -343,6 +345,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage('本机处理 · 原始文件保留 · Python 原生桌面版')
         self.refresh()
         self.refresh_environment()
+        self._restoring_page = False
+        self.navigate(preferred_page if isinstance(preferred_page, int) and 0 <= preferred_page < self.pages.count() else 0)
 
     def add_control(self, control):
         self.controls.append(control)
@@ -384,6 +388,8 @@ class MainWindow(QMainWindow):
         h.addWidget(self.crumb)
         h.addStretch()
         h.addWidget(label('DESKTOP ' + VERSION, 'eyebrow'))
+        h.addSpacing(12)
+        h.addWidget(button('档案生成', lambda: self.navigate(4), name='link'))
         h.addSpacing(12)
         h.addWidget(button('使用指南', self.guide, name='link'))
         return frame
@@ -587,6 +593,8 @@ class MainWindow(QMainWindow):
         for i, b in enumerate(self.nav):
             b.setChecked(i == index)
         self.crumb.setText('工作空间  /  ' + self.nav[index].text())
+        if not self._restoring_page and hasattr(self, 'generation'):
+            self.generation.remember(lastPage=index)
 
     def job(self):
         return self.store.jobs.get(self.active_id)

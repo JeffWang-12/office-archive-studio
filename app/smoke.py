@@ -153,7 +153,7 @@ def run_smoke_test(window, result_path):
         original_dialog = QFileDialog.getSaveFileName
         QFileDialog.getSaveFileName = lambda *args, **kwargs: (str(destination), 'Word 文档 (*.docx)')
         try:
-            page.generate()
+            page.generate_as()
         finally:
             QFileDialog.getSaveFileName = original_dialog
         after_task(generated)
@@ -167,6 +167,8 @@ def run_smoke_test(window, result_path):
         QApplication.processEvents()
         window.grab().save(str(result_path.parent / 'native-generator.png'))
         state['checks'].append('Native custom template, generation, font embedding and draft save')
+        assert len(window.generation.success_dialog.checklist) == 6
+        window.generation.success_dialog.close()
         generated_id = window.active_id
         extra = window.store.create('批量删除测试.docx', (result_path.parent / 'native-export.docx').read_bytes())
         window.refresh()
