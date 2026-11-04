@@ -13,3 +13,5 @@ assets/fonts/*
 !assets/fonts/README.md
 assets/reference/*
 !assets/reference/README.md
+assets/generator/*
+!assets/generator/README.md

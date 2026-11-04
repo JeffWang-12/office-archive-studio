@@ -10,6 +10,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from lxml import etree as E
+from .profiles import standard_for, paper_twips
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -225,6 +226,11 @@ class Package:
 
     def inspect(self, options=None):
         options = options or {}
+        try:
+            standard = standard_for(options)
+        except ValueError as exc:
+            raise DocumentError(str(exc)) from exc
+        custom = bool(options.get('standard'))
         roles = self.roles(options.get('roles'))
         issues = []
 
@@ -236,19 +242,17 @@ class Package:
         for n, s in enumerate(self.document.xpath('.//w:sectPr', namespaces=NS)):
             loc = f'第 {n + 1} 节'
             landscape = val(s, 'pgSz', 'orient') == 'landscape'
-            expected_size = ('16838', '11906') if landscape else ('11906', '16838')
+            size = paper_twips(standard)
+            expected_size = tuple(map(str, reversed(size) if landscape else size))
             if (val(s, 'pgSz', 'w'), val(s, 'pgSz', 'h')) != expected_size:
-                issue('paper', '纸张规格', f"{val(s, 'pgSz', 'w', '?')} × {val(s, 'pgSz', 'h', '?')} twip", 'A4' + (' 横向（保留方向）' if landscape else ' 纵向'), loc)
-            for key, mm in [('top', 37), ('bottom', 35), ('left', 28), ('right', 26), ('header', 15), ('footer', 25)]:
+                issue('paper', '纸张规格', f"{val(s, 'pgSz', 'w', '?')} × {val(s, 'pgSz', 'h', '?')} twip", standard['paper'] + (' 横向（保留方向）' if landscape else ' 纵向'), loc)
+            for key, mm in standard['margins'].items():
                 v = val(s, 'pgMar', key)
                 target = round(mm / 25.4 * 1440)
                 if v is None or not v.isdigit() or abs(int(v) - target) > 2:
                     issue('margin', {'top': '上页边距', 'bottom': '下页边距', 'left': '左页边距', 'right': '右页边距', 'header': '页眉距边界', 'footer': '页脚距边界'}[key], f'{round(int(v) / 1440 * 2.54, 2)} cm' if v and v.isdigit() else '未明确设置', f'{mm / 10:g} cm', loc)
             if n == 0 and s.find(tag('titlePg')) is None:
                 issue('first-page', '首页页码', '未启用首页不同', '首页不显示页码', loc, auto=not self.complex_footer())
-        title_line = int(options.get('titleLine', 35))
-        if not 33 <= title_line <= 36:
-            raise DocumentError('标题行距须在 33–36 磅之间。')
         preview = []
         for i, (p, role) in enumerate(zip(self.paragraphs, roles)):
             t = text_of(p)
@@ -256,7 +260,8 @@ class Package:
             if role in ('blank', 'table', 'object'):
                 continue
             loc = f'第 {i + 1} 段 · {LABELS[role]}'
-            font, size = FONTS[role], (44 if role == 'title' else 32)
+            target = standard['roles'][role]
+            font, size = target['font'], round(target['size'] * 2)
             runs = [r for r in runs_of(p) if r.find(tag('t')) is not None]
             bad_fonts, bad_sizes, bad_latin = set(), set(), False
             for r in runs:
@@ -274,25 +279,25 @@ class Package:
             if bad_fonts:
                 issue('font', '中文字体', '、'.join(sorted(bad_fonts)), font, loc, i)
             if bad_sizes:
-                issue('size', '字号', '、'.join(sorted(bad_sizes)), f'{size / 2:g} pt（' + ('二号' if role == 'title' else '三号') + '）', loc, i)
+                issue('size', '字号', '、'.join(sorted(bad_sizes)), f'{size / 2:g} pt', loc, i)
             if bad_latin:
                 issue('latin-font', '标题数字字体', '非 Times New Roman', 'Times New Roman', loc, i)
             line = self.effective(p, 'pPr/spacing', 'line')
             rule = self.effective(p, 'pPr/spacing', 'lineRule')
-            expected_line = title_line if role == 'title' else 28
-            if line != str(expected_line * 20) or rule != 'exact':
+            expected_line = target['line']
+            if line != str(round(expected_line * 20)) or rule != 'exact':
                 issue('line', '固定行距', f'{line or "继承"} / {rule or "自动"}', f'固定值 {expected_line} pt', loc, i)
             indent = self.effective(p, 'pPr/ind', 'firstLineChars')
             first = self.effective(p, 'pPr/ind', 'firstLine')
-            expected_indent = '0' if role in ('title', 'subtitle', 'date', 'signature', 'attachment') else '200'
+            expected_indent = str(round(target['indent'] * 100))
             if indent != expected_indent and not (expected_indent == '0' and (indent in (None, '0')) and first in (None, '0')):
-                issue('indent', '首行缩进', f'{int(indent) / 100:g} 字符' if indent and indent.isdigit() else '非明确字符缩进', '2 字符' if expected_indent == '200' else '0 字符', loc, i)
+                issue('indent', '首行缩进', f'{int(indent) / 100:g} 字符' if indent and indent.isdigit() else '非明确字符缩进', f"{target['indent']:g} 字符", loc, i)
             if any(self.effective(p, 'pPr/spacing', x) not in (None, '0') for x in ('before', 'after', 'beforeLines', 'afterLines', 'beforeAutospacing', 'afterAutospacing')):
                 issue('spacing', '段前段后', '存在段落间距', '均为 0', loc, i)
             align = self.effective(p, 'pPr/jc')
-            target_align = 'center' if role in ('title', 'subtitle') else ('right' if role in ('date', 'signature') else None)
+            target_align = target['align'] if custom else ('center' if role in ('title', 'subtitle') else ('right' if role in ('date', 'signature') else None))
             if target_align and align != target_align:
-                issue('alignment', '段落对齐', align or '默认', '居中' if target_align == 'center' else '右侧落款区', loc, i)
+                issue('alignment', '段落对齐', align or '默认', {'center': '居中', 'right': '右对齐', 'left': '左对齐', 'both': '两端对齐'}[target_align], loc, i)
             if role.startswith('h') and re.search(r'[：:。；;，,、！？!?]$', t.strip()):
                 issue('heading-punctuation', '标题末尾标点', t.strip()[-1], '分行标题末尾不加标点，请确认后修改文字', loc, i, False, '格式规范第 1 页 · 四')
             if role == 'date' and re.search(r'年\s*0\d|月\s*0\d', t):
@@ -325,7 +330,12 @@ class Package:
         elif not re.fullmatch(r'.+-.+-\d{8}', self.name.rsplit('.', 1)[0]):
             issue('filename', '归档文件命名', self.name, '文档名-处理人-年月日.docx；可在导出时设置', auto=False, source='格式规范第 4 页 · 九')
         auto_count = sum(i['auto'] for i in issues)
+        if custom:
+            for entry in issues:
+                if entry['auto']:
+                    entry['source'] = '自定义规范 · ' + standard['name']
         return {'name': self.name, 'paragraphs': preview, 'issues': issues, 'autoCount': auto_count,
+                'standardName': standard['name'],
                 'manualCount': len(issues) - auto_count, 'paragraphCount': sum(bool(x['text']) for x in preview),
                 'sectionCount': len(self.document.xpath('.//w:sectPr', namespaces=NS)),
                 'imageCount': len([k for k in self.parts if k.startswith('word/media/')]),
@@ -361,6 +371,7 @@ class Package:
     def repair(self, options=None):
         options = options or {}
         before = self.inspect(options)
+        standard = standard_for(options)
         if not before['canFix']:
             raise DocumentError('请先处理编辑保护、数字签名或未完成的修订，再修正格式。')
         before_text = [text_of(p) for p in self.paragraphs]
@@ -368,18 +379,21 @@ class Package:
         for i, (p, role) in enumerate(zip(self.paragraphs, roles)):
             if role in ('blank', 'table', 'object'):
                 continue
+            target = standard['roles'][role]
             pp = p.find(tag('pPr'))
             if pp is None:
                 pp = E.Element(tag('pPr'))
                 p.insert(0, pp)
             sp = node(pp, 'spacing', before=0, after=0, beforeLines=0, afterLines=0,
                       beforeAutospacing=0, afterAutospacing=0,
-                      line=(int(options.get('titleLine', 35)) if role == 'title' else 28) * 20, lineRule='exact')
-            ind = node(pp, 'ind', firstLineChars=0 if role in ('title', 'subtitle', 'date', 'signature', 'attachment') else 200,
+                      line=round(target['line'] * 20), lineRule='exact')
+            ind = node(pp, 'ind', firstLineChars=round(target['indent'] * 100),
                        firstLine=0, left=0, right=0)
             for attr in ('hanging', 'hangingChars', 'leftChars', 'rightChars', 'start', 'end', 'startChars', 'endChars'):
                 ind.attrib.pop(tag(attr), None)
-            if role in ('title', 'subtitle'):
+            if options.get('standard'):
+                node(pp, 'jc', val=target['align'])
+            elif role in ('title', 'subtitle'):
                 node(pp, 'jc', val='center')
             elif role in ('date', 'signature'):
                 node(pp, 'jc', val='right')
@@ -403,11 +417,11 @@ class Package:
                 if rp is None:
                     rp = E.Element(tag('rPr'))
                     run.insert(0, rp)
-                rf = node(rp, 'rFonts', eastAsia=FONTS[role], ascii='Times New Roman', hAnsi='Times New Roman', cs='Times New Roman', hint='eastAsia')
+                rf = node(rp, 'rFonts', eastAsia=target['font'], ascii='Times New Roman', hAnsi='Times New Roman', cs='Times New Roman', hint='eastAsia')
                 for a in ('asciiTheme', 'hAnsiTheme', 'eastAsiaTheme', 'cstheme'):
                     rf.attrib.pop(tag(a), None)
-                node(rp, 'sz', val=44 if role == 'title' else 32)
-                node(rp, 'szCs', val=44 if role == 'title' else 32)
+                node(rp, 'sz', val=round(target['size'] * 2))
+                node(rp, 'szCs', val=round(target['size'] * 2))
                 node(rp, 'spacing', val=0)
                 node(rp, 'w', val=100)
                 node(rp, 'position', val=0)
@@ -416,8 +430,9 @@ class Package:
         complex_footer = self.complex_footer()
         for n, s in enumerate(sections):
             landscape = val(s, 'pgSz', 'orient') == 'landscape'
-            node(s, 'pgSz', w=16838 if landscape else 11906, h=11906 if landscape else 16838)
-            node(s, 'pgMar', **{k: round(v / 25.4 * 1440) for k, v in [('top', 37), ('bottom', 35), ('left', 28), ('right', 26), ('header', 15), ('footer', 25)]})
+            width, height = paper_twips(standard)
+            node(s, 'pgSz', w=height if landscape else width, h=width if landscape else height)
+            node(s, 'pgMar', **{k: round(v / 25.4 * 1440) for k, v in standard['margins'].items()})
             node(s, 'textDirection', val='lrTb')
             # Disable document-grid snapping per paragraph; preserve other CJK settings.
             if not complex_footer and n == 0:

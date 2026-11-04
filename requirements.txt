@@ -1,2 +1,7 @@
 lxml>=5.0,<7
 PySide6-Essentials>=6.8,<7
+python-docx>=1.2,<2
+docxtpl>=0.20.2,<0.21
+fonttools>=4.65,<5
+Pillow>=12,<14
+Jinja2>=3.1.6,<4

@@ -9,7 +9,11 @@
 - **Qt 6** — Qt 各模块使用上游公布的许可。<https://code.qt.io/qt/>，<https://doc.qt.io/qt-6/licenses-used-in-qt.html>。本应用使用 Qt Core、Gui、Widgets，不使用 WebEngine。
 - **lxml / libxml2 / libxslt** — lxml 为 BSD 许可，底层库许可见随附文本及 <https://lxml.de/>。
 - **PyInstaller** — GPL-2.0-or-later with bootloader exception。<https://pyinstaller.org/>。仅用于打包和程序启动引导。
+- **python-docx / docxtpl** — MIT / LGPL-2.1-or-later，分别用于 DOCX 生成与模板渲染。<https://github.com/python-openxml/python-docx>、<https://github.com/elapouya/python-docx-template>。
+- **fontTools** — MIT，用于检查字体嵌入标志与字形子集。<https://github.com/fonttools/fonttools>。
+- **Pillow** — HPND / MIT-CMU，用于图片验证和方向处理，详见组件自带许可。<https://github.com/python-pillow/Pillow>。
+- **Jinja2 / MarkupSafe** — BSD-3-Clause，用于转义与隔离模板渲染。<https://github.com/pallets/jinja>、<https://github.com/pallets/markupsafe>。
 
-字体名称、格式参数和检测逻辑保留在程序中，字体文件和规范原件由使用者自行在本机配置。程序不自动安装字体，也不自动嵌入导出的 DOCX。方正公文楷体为可选字体，不替代规范要求的楷体_GB2312。
+字体名称、格式参数和检测逻辑保留在程序中，字体、模板和规范原件由使用者自行在本机配置。程序不自动安装字体。格式纠正不增加字体嵌入，档案生成可手动启用允许嵌入的字体。方正公文楷体为可选字体，不替代规范要求的楷体_GB2312。
 
 本项目源码及打包脚本与二进制包一并交付；源码不包含开发测试记录、用户导入的档案、Python 环境或网页界面。

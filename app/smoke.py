@@ -9,7 +9,8 @@ import sys
 import traceback
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QComboBox, QFileDialog
+from PySide6.QtWidgets import QApplication, QComboBox, QFileDialog, QMessageBox
+from PySide6.QtCore import Qt
 
 from .desktop import ParagraphDialog
 from .engine import Package
@@ -56,6 +57,7 @@ def run_smoke_test(window, result_path):
         assert job['report']['autoCount'] > 0
         assert window.queue.rowCount() == before_count + 1
         state['before'] = job['report']['autoCount']
+        state['originalDemo'] = job['id']
         state['checks'].append('Native demo import and background worker signal')
         dialog = ParagraphDialog(job, window)
         dialog.show()
@@ -117,6 +119,74 @@ def run_smoke_test(window, result_path):
         QApplication.processEvents()
         window.grab().save(str(result_path.parent / 'native-workspace.png'))
         state['screenshot'] = str(result_path.parent / 'native-workspace.png')
+        generator_test()
+
+    def generator_test():
+        from docx import Document
+        from docx.oxml.ns import qn
+        from .profiles import default_standard
+        standard = default_standard()
+        standard['name'] = '原生自定义规范测试'
+        standard['roles']['body'].update(font='宋体', size=14, line=25)
+        key = window.profiles.save(standard)
+        options = window.profiles.options(key)
+        data, _, after = Package((result_path.parent / 'native-export.docx').read_bytes(), '自定义检查.docx').repair(options)
+        assert after['autoCount'] == 0
+        state['checks'].append('Custom standard persistence and formatting round trip')
+        template = result_path.parent / 'smoke-template.docx'
+        document = Document()
+        document.add_paragraph('{{ project_name }}')
+        body = document.add_paragraph('{{ content }}')
+        body.runs[0].font.name = '仿宋_GB2312'
+        body.runs[0]._element.get_or_add_rPr().rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
+        document.save(template)
+        page = window.generation
+        imported_path = page.library.add_template(template)
+        page.refresh_catalog()
+        name = next(name for name, spec in page.catalog.items() if Path(spec['path']) == imported_path)
+        page.templates.setCurrentText(name)
+        page.fields['project_name'][1].setText('原生档案生成测试')
+        page.fields['content'][1].setPlainText('保留 <正文> & 数据\n第二段文字')
+        page.embed.setChecked(True)
+        window.navigate(4)
+        destination = result_path.parent / 'native-generated.docx'
+        original_dialog = QFileDialog.getSaveFileName
+        QFileDialog.getSaveFileName = lambda *args, **kwargs: (str(destination), 'Word 文档 (*.docx)')
+        try:
+            page.generate()
+        finally:
+            QFileDialog.getSaveFileName = original_dialog
+        after_task(generated)
+
+    def generated():
+        path = result_path.parent / 'native-generated.docx'
+        package = Package(path.read_bytes(), path.name)
+        assert any('保留 <正文> & 数据' in p['text'] for p in package.inspect()['paragraphs'])
+        window.generation.save_draft()
+        assert window.generation.library.draft_path.is_file()
+        QApplication.processEvents()
+        window.grab().save(str(result_path.parent / 'native-generator.png'))
+        state['checks'].append('Native custom template, generation, font embedding and draft save')
+        generated_id = window.active_id
+        extra = window.store.create('批量删除测试.docx', (result_path.parent / 'native-export.docx').read_bytes())
+        window.refresh()
+        for row in range(window.history.rowCount()):
+            entry = window.history.item(row, 0)
+            entry.setCheckState(Qt.CheckState.Checked if entry.data(Qt.ItemDataRole.UserRole) in (generated_id, extra['id']) else Qt.CheckState.Unchecked)
+        assert len(window.selected_history_ids()) == 2
+        original_question = QMessageBox.question
+        QMessageBox.question = lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+        try:
+            window.remove_history()
+        finally:
+            QMessageBox.question = original_question
+        after_task(deleted)
+
+    def deleted():
+        assert len(window.store.jobs) == before_count + 1
+        assert (result_path.parent / 'native-generated.docx').is_file()
+        assert state['originalDemo'] in window.store.jobs
+        state['checks'].append('Native checkbox batch deletion preserves exported documents')
         finish()
 
     guard(window.demo)()

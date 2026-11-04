@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from copy import deepcopy
 import io
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -30,14 +32,32 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.jobs = {}
+        self.pending_deletions = 0
         path = self.root / 'history.json'
+        history_loaded = not path.exists()
         if path.exists():
             try:
                 for job in json.loads(path.read_text(encoding='utf-8')):
+                    # A crash while staging a deletion must not discard a record
+                    # that the atomically saved history still references.
+                    key = job.get('id', '')
+                    valid = isinstance(key, str) and len(key) == 32 and all(c in '0123456789abcdef' for c in key)
+                    if valid and not (self.root / key).exists():
+                        for staged in self.root.glob('.deleted-' + key + '-*'):
+                            if staged.is_dir() and not staged.is_symlink():
+                                staged.rename(self.root / key)
+                                break
                     if isinstance(job.get('id'), str) and len(job['id']) == 32 and all(c in '0123456789abcdef' for c in job['id']) and (self.root / job['id'] / 'original.docx').is_file():
                         self.jobs[job['id']] = job
+                history_loaded = True
             except (ValueError, KeyError, OSError):
                 pass
+        for staged in self.root.glob('.deleted-*'):
+            if history_loaded and staged.is_dir() and not staged.is_symlink() and staged.resolve().parent == self.root.resolve():
+                try:
+                    shutil.rmtree(staged)
+                except OSError:
+                    self.pending_deletions += 1
 
     def save(self):
         with self.lock:
@@ -51,7 +71,7 @@ class Store:
         return self.root / key
 
     def create(self, name, data, options=None, demo=False):
-        options = options or {}
+        options = deepcopy(options or {})
         if len(data) > MAX_UPLOAD:
             raise DocumentError('单个文件不能超过 25 MB。')
         name = safe_name(name)
@@ -90,7 +110,7 @@ class Store:
             folder = self.folder(key)
             # Reanalysis uses the immutable imported source and invalidates stale exports.
             report = Package((folder / 'original.docx').read_bytes(), job['name']).inspect(options)
-            job.update(options=options, report=report, status='checked', fixedAt=None)
+            job.update(options=deepcopy(options), report=report, status='checked', fixedAt=None)
             job.pop('after', None)
             for name in ('corrected.docx', 'corrected.pdf'):
                 (folder / name).unlink(missing_ok=True)
@@ -112,7 +132,7 @@ class Store:
     def report(self, key):
         job = self.jobs[key]
         lines = ['归档 · 格式检查与修正记录', '=' * 38, f"文件：{job['name']}", f"检查时间：{job['created']}",
-                 '依据：共青团文件格式规范（2025年12月17日）；学院学生会工作档案考核方案',
+                 '适用规范：' + job['report'].get('standardName', '团内文件 · 通用规范'),
                  '本报告仅覆盖格式检查，不是正式考核得分。内容真实性、完整性、逻辑、创新及印章需人工审阅。',
                  '段落预览为结构预览，不代表 Word / WPS 的最终分页。', '']
         if job.get('convertedWith'):
@@ -191,8 +211,38 @@ class Store:
         return result
 
     def remove(self, key):
+        return self.remove_many([key])
+
+    def remove_many(self, keys):
+        """Validate every selection before deleting; never follow a record symlink."""
         with self.lock:
-            folder = self.folder(key)
-            del self.jobs[key]
-            self.save()
-            shutil.rmtree(folder)
+            keys = list(dict.fromkeys(keys))
+            if not keys:
+                raise DocumentError('请先选择要删除的记录')
+            folders = [self.folder(key) for key in keys]
+            root = self.root.resolve()
+            if any(folder.is_symlink() or folder.resolve().parent != root for folder in folders):
+                raise DocumentError('记录目录异常，已停止删除')
+            # Stage directories first. A locked file/directory leaves the history intact.
+            staged = []
+            previous = dict(self.jobs)
+            try:
+                for folder in folders:
+                    target = root / ('.deleted-' + folder.name + '-' + uuid.uuid4().hex)
+                    folder.rename(target)
+                    staged.append((folder, target))
+                self.jobs = {key: job for key, job in self.jobs.items() if key not in keys}
+                self.save()
+            except Exception:
+                self.jobs = previous
+                for source, target in reversed(staged):
+                    target.rename(source)
+                raise
+            self.pending_deletions = 0
+            for _, target in staged:
+                try:
+                    shutil.rmtree(target)
+                except OSError:
+                    self.pending_deletions += 1
+                    logging.warning('Record removed; locked copy will be cleaned on next launch: %s', target)
+            return len(keys)

@@ -2,6 +2,7 @@
 STYLE = '''
 QWidget { color: #34453c; font-family: "Microsoft YaHei UI", "Segoe UI"; font-size: 12px; }
 QMainWindow, QDialog { background: #f5f7f3; }
+QWidget#generatorForm { background: white; }
 QFrame#sidebar { background: #fcfdfb; border-right: 1px solid #e0e6dc; }
 QLabel#brand { color: #294d3e; font-size: 30px; font-weight: 650; }
 QLabel#brandSub, QLabel#eyebrow { color: #8b956f; font-size: 10px; letter-spacing: 2px; }
@@ -28,8 +29,8 @@ QPushButton#nav:checked { background: #315746; color: white; }
 QPushButton#nav:hover:!checked { background: #edf2e8; }
 QPushButton#link { color: #6c8659; background: transparent; border: 0; padding: 5px 2px; text-align: left; }
 QPushButton[danger="true"] { color: #a65747; }
-QComboBox, QLineEdit, QSpinBox { background: white; border: 1px solid #d9e1d2; border-radius: 5px; padding: 7px 10px; selection-background-color: #d4e3c6; min-height: 16px; }
-QComboBox:focus, QLineEdit:focus, QSpinBox:focus { border-color: #8ba774; }
+QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox { background: white; border: 1px solid #d9e1d2; border-radius: 5px; padding: 7px 10px; selection-background-color: #d4e3c6; min-height: 16px; }
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #8ba774; }
 QComboBox::drop-down { border: 0; width: 24px; }
 QComboBox QAbstractItemView { background: white; selection-background-color: #e4eddb; color: #34453c; }
 QTableWidget, QTreeWidget, QListWidget { border: 0; background: white; alternate-background-color: #f9fbf6; selection-background-color: #e6efde; selection-color: #345131; outline: none; gridline-color: #edf0e8; }

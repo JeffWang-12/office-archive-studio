@@ -28,8 +28,11 @@ from .engine import RULES, LABELS, FONTS, make_sample, DocumentError
 from .storage import Store
 from .platform import environment, resource_root
 from .theme import STYLE
+from .profiles import ProfileStore, standard_for
+from .profile_ui import StandardsDialog
+from .generation_ui import GenerationPage
 
-VERSION = '2.0.1'
+VERSION = '2.1.0'
 ROLE_CHOICES = {k: v for k, v in LABELS.items() if k not in ('blank', 'table', 'object')}
 
 
@@ -167,17 +170,22 @@ class SettingsDialog(QDialog):
         v.setSpacing(18)
         form = QFormLayout()
         self.profile = QComboBox()
-        self.profile.addItem('团内文件 · 通用规范', 'general')
-        self.profile.addItem('学院工作总结 · 考核规范', 'summary')
-        self.profile.setCurrentIndex(1 if options.get('profile') == 'summary' else 0)
+        self.profiles = parent.profiles
+        for key, name in self.profiles.choices().items():
+            self.profile.addItem(name, key)
+        if options.get('standard') and options.get('profile') not in self.profiles.choices():
+            self.profile.addItem(options['standard']['name'] + '（记录快照）', options['profile'])
+        self.profile.setCurrentIndex(max(0, self.profile.findData(options.get('profile', 'general'))))
         self.line = QSpinBox()
         self.line.setRange(33, 36)
         self.line.setValue(options.get('titleLine', 35))
         self.line.setSuffix(' 磅')
+        self.profile.currentIndexChanged.connect(lambda: self.line.setEnabled(self.profile.currentData() in ('general', 'summary')))
+        self.line.setEnabled(self.profile.currentData() in ('general', 'summary'))
         form.addRow('适用规范', self.profile)
         form.addRow('主标题固定行距', self.line)
         v.addLayout(form)
-        v.addWidget(label('正文及各级标题固定 28 磅。保存后从原始副本重新检查，需再次修正以生成最新导出文件。', 'muted', True))
+        v.addWidget(label('内置规范标题行距 33–36 磅；自定义规范采用其保存的文本与版面参数。保存后从原始副本重新检查，需再次修正以生成最新导出文件。', 'muted', True))
         buttons = QDialogButtonBox()
         buttons.addButton('取消', QDialogButtonBox.ButtonRole.RejectRole)
         buttons.addButton('保存并重新检查', QDialogButtonBox.ButtonRole.AcceptRole)
@@ -186,7 +194,13 @@ class SettingsDialog(QDialog):
         v.addWidget(buttons)
 
     def result_options(self):
-        return {**self.options, 'profile': self.profile.currentData(), 'titleLine': self.line.value()}
+        key = self.profile.currentData()
+        if key not in self.profiles.choices() and self.options.get('standard'):
+            return dict(self.options)
+        result = self.profiles.options(key, self.line.value())
+        if 'roles' in self.options:
+            result['roles'] = self.options['roles']
+        return result
 
 
 class ParagraphDialog(QDialog):
@@ -246,6 +260,7 @@ class ParagraphDialog(QDialog):
     def render_paper(self):
         self.paper.clear()
         cursor = self.paper.textCursor()
+        standard = standard_for(self.job['options'])
         for i, p in enumerate(self.job['report']['paragraphs']):
             if i:
                 cursor.insertBlock()
@@ -254,15 +269,17 @@ class ParagraphDialog(QDialog):
             block.setTopMargin(0)
             block.setBottomMargin(9)
             block.setLineHeight(150, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
-            font = QFont(FONTS.get(role, 'Microsoft YaHei UI'))
-            font.setPointSize(22 if role == 'title' else 16 if role not in ('table', 'object', 'blank') else 11)
-            if role in ('title', 'subtitle'):
+            target = standard['roles'].get(role)
+            font = QFont(target['font'] if target else 'Microsoft YaHei UI')
+            font.setPointSizeF(target['size'] if target else 11)
+            if target:
+                block.setTextIndent(target['size'] * target['indent'])
+                block.setAlignment({'center': Qt.AlignmentFlag.AlignHCenter, 'right': Qt.AlignmentFlag.AlignRight, 'left': Qt.AlignmentFlag.AlignLeft, 'both': Qt.AlignmentFlag.AlignJustify}[target['align']])
+            elif role in ('title', 'subtitle'):
                 block.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             elif role in ('signature', 'date'):
                 block.setAlignment(Qt.AlignmentFlag.AlignRight)
                 block.setRightMargin(40)
-            elif role not in ('table', 'object', 'blank', 'attachment'):
-                block.setTextIndent(32)
             cursor.setBlockFormat(block)
             char = QTextCharFormat()
             char.setFont(font)
@@ -285,6 +302,7 @@ class MainWindow(QMainWindow):
     def __init__(self, store):
         super().__init__()
         self.store = store
+        self.profiles = ProfileStore(store.root)
         self.env = environment()
         self.active_id = None
         self.busy = False
@@ -312,6 +330,8 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.build_rules())
         self.pages.addWidget(self.build_environment())
         self.pages.addWidget(self.build_history())
+        self.generation = GenerationPage(self)
+        self.pages.addWidget(self.generation)
         v.addWidget(self.pages, 1)
         h.addWidget(shell, 1)
         self.progress = QProgressBar()
@@ -341,13 +361,13 @@ class MainWindow(QMainWindow):
         v.addWidget(label('办公室工作空间', 'muted'))
         v.addSpacing(8)
         self.nav = []
-        for index, title in enumerate(['格式工作台', '档案规范', '兼容与字体', '处理记录']):
+        for index, title in enumerate(['格式工作台', '档案规范', '兼容与字体', '处理记录', '档案生成']):
             b = button(title, lambda _, i=index: self.navigate(i), name='nav')
             b.setCheckable(True)
             self.nav.append(b)
             v.addWidget(b)
         v.addStretch()
-        v.addWidget(label('专注内容\n让格式回归秩序。', 'section', True))
+        v.addWidget(label('专注内容\n让格式回归秩序', 'section', True))
         v.addSpacing(13)
         v.addWidget(label('为团委 · 学生会办公室而作', 'muted', True))
         v.addSpacing(28)
@@ -363,7 +383,7 @@ class MainWindow(QMainWindow):
         self.crumb = label('工作空间  /  格式工作台', 'muted')
         h.addWidget(self.crumb)
         h.addStretch()
-        h.addWidget(label('DESKTOP 2.0.1', 'eyebrow'))
+        h.addWidget(label('DESKTOP ' + VERSION, 'eyebrow'))
         h.addSpacing(12)
         h.addWidget(button('使用指南', self.guide, name='link'))
         return frame
@@ -378,7 +398,7 @@ class MainWindow(QMainWindow):
         return w, v
 
     def build_workspace(self):
-        w, v = self.page('好格式，从这里开始。', '依据团委与学生会档案规范，直接检查并修正本机文档。')
+        w, v = self.page('好格式，从这里开始', '依据团委与学生会档案规范，直接检查并修正本机文档')
         stats = QHBoxLayout()
         stats.setSpacing(13)
         self.stat_numbers = []
@@ -396,10 +416,10 @@ class MainWindow(QMainWindow):
         toolbar = QHBoxLayout()
         self.profile = QComboBox()
         self.profile.setAccessibleName('档案规范类型')
-        self.profile.addItem('团内文件 · 通用规范', 'general')
-        self.profile.addItem('学院工作总结 · 考核规范', 'summary')
+        self.refresh_profiles()
         self.profile.setMinimumWidth(220)
         toolbar.addWidget(self.profile)
+        toolbar.addWidget(self.add_control(button('管理规范…', self.manage_profiles)))
         toolbar.addStretch()
         self.demo_button = self.add_control(button('体验示例', self.demo))
         toolbar.addWidget(self.demo_button)
@@ -471,10 +491,11 @@ class MainWindow(QMainWindow):
         return w
 
     def build_rules(self):
-        w, v = self.page('规范，有据可循。', '规则来自提供的团内格式规范与学院学生会工作档案考核方案。')
+        w, v = self.page('规范，有据可循', '查看内置要求，或添加适合自己的文本格式规范')
         row = QHBoxLayout()
         row.addWidget(button('查看本机格式规范…', lambda: self.open_reference('rules.pdf')))
         row.addWidget(button('查看本机考核方案…', lambda: self.open_reference('assessment.docx')))
+        row.addWidget(self.add_control(button('我的格式规范…', self.manage_profiles, True)))
         row.addStretch()
         v.addLayout(row)
         c, cv = card()
@@ -495,7 +516,7 @@ class MainWindow(QMainWindow):
         return w
 
     def build_environment(self):
-        w, v = self.page('在 Word，也在 WPS。', '检查本机排版组件与规范字体，减少跨软件打开时的格式差异。')
+        w, v = self.page('在 Word，也在 WPS', '检查本机排版组件与规范字体，减少跨软件打开时的格式差异')
         self.office_state = label('', 'status', True)
         v.addWidget(self.office_state)
         v.addWidget(label('DOCX 检查与修正不依赖 Office。旧版 DOC / WPS 转换、PDF 导出需本机可用的 Office 自动化组件。', 'muted', True))
@@ -513,17 +534,20 @@ class MainWindow(QMainWindow):
         row.addWidget(button('打开字体文件', self.open_font))
         row.addStretch()
         v.addLayout(row)
-        v.addWidget(label('开源版不随附字体。请使用你已取得使用权限的本机字体；安装后重启 Word / WPS 并重新检测。\n可选的本机字体资源不会上传。应用不自动安装或嵌入字体，不同软件及版本仍可能造成分页差异。', 'muted', True))
+        v.addWidget(label('开源版不随附字体。请使用你已取得使用权限的本机字体；安装后重启 Word / WPS 并重新检测。\n格式纠正保留字体名称；档案生成可选择嵌入允许嵌入的字体。不同软件及版本仍可能造成分页差异。', 'muted', True))
         return w
 
     def build_history(self):
-        w, v = self.page('留存每一次整理。', '文档副本、检查结果与修正记录保存在本机，可继续处理和导出。')
+        w, v = self.page('留存每一次整理', '文档副本、检查结果与修正记录保存在本机，可继续处理和导出')
         self.search = QLineEdit()
         self.search.setPlaceholderText('搜索档案名称…')
         self.search.textChanged.connect(self.filter_history)
         v.addWidget(self.search)
         c, cv = card()
         self.history = table(['档案名称', '处理时间', '状态', '格式问题', '人工核对'])
+        self.history.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.history.itemChanged.connect(self.update_history_selection)
+        self.history.itemSelectionChanged.connect(self.update_history_selection)
         self.history.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for i, width in [(1, 145), (2, 100), (3, 80), (4, 80)]:
             self.history.setColumnWidth(i, width)
@@ -532,12 +556,31 @@ class MainWindow(QMainWindow):
         v.addWidget(c, 1)
         row = QHBoxLayout()
         row.addWidget(self.add_control(button('继续处理', self.continue_history, True)))
-        row.addWidget(self.add_control(button('删除本机记录', self.remove_history)))
+        row.addWidget(self.add_control(button('全选当前结果', self.select_all_history)))
+        row.addWidget(self.add_control(button('取消选择', self.clear_history_selection)))
+        self.delete_history_button = self.add_control(button('删除所选记录', self.remove_history))
+        self.delete_history_button.setProperty('danger', True)
+        row.addWidget(self.delete_history_button)
         row.addWidget(button('打开记录目录', lambda: self.open_path(self.store.root)))
         row.addStretch()
+        self.history_selected_label = label('已选择 0 份', 'muted')
+        row.addWidget(self.history_selected_label)
         v.addLayout(row)
-        v.addWidget(label('删除只清理应用内的副本与记录；你电脑上的原始文件及已导出文件保留。', 'muted', True))
+        v.addWidget(label('勾选记录，或用 Ctrl / Shift 多选 · 全选仅作用于当前搜索结果\n删除只清理应用内的副本与记录，原始文件及已导出文件保留', 'muted', True))
         return w
+
+    def refresh_profiles(self, key=None):
+        selected = key or self.profile.currentData()
+        self.profile.clear()
+        for code, title in self.profiles.choices().items():
+            self.profile.addItem(title, code)
+        self.profile.setCurrentIndex(max(0, self.profile.findData(selected)))
+
+    def manage_profiles(self):
+        if not self.busy:
+            dialog = StandardsDialog(self.profiles, self)
+            dialog.exec()
+            self.refresh_profiles(dialog.key())
 
     def navigate(self, index):
         self.pages.setCurrentIndex(index)
@@ -561,6 +604,8 @@ class MainWindow(QMainWindow):
         self.queue_count.setText(f'{len(jobs)} 份')
         selected = self.active_id
         self.queue.blockSignals(True)
+        checked = set(self.selected_history_ids())
+        self.history.blockSignals(True)
         self.queue.setRowCount(len(jobs))
         self.history.setRowCount(len(jobs))
         for row, j in enumerate(jobs):
@@ -575,7 +620,11 @@ class MainWindow(QMainWindow):
             values = [j['name'], date, status, report['autoCount'], report['manualCount']]
             for col, value in enumerate(values):
                 self.history.setItem(row, col, item(value, j['id'] if col == 0 else None))
+            entry = self.history.item(row, 0)
+            entry.setFlags(entry.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            entry.setCheckState(Qt.CheckState.Checked if j['id'] in checked else Qt.CheckState.Unchecked)
         self.queue.blockSignals(False)
+        self.history.blockSignals(False)
         self.filter_history()
         self.refresh_detail()
         self.navigate(self.pages.currentIndex())
@@ -666,7 +715,7 @@ class MainWindow(QMainWindow):
     def import_files(self, files):
         if self.busy or not files:
             return
-        options = {'profile': self.profile.currentData(), 'titleLine': 35}
+        options = self.profiles.options(self.profile.currentData())
         def work():
             jobs, errors = [], []
             for file in files:
@@ -689,7 +738,7 @@ class MainWindow(QMainWindow):
         self.run_task('正在导入并检查档案', work, complete)
 
     def demo(self):
-        options = {'profile': self.profile.currentData(), 'titleLine': 35}
+        options = self.profiles.options(self.profile.currentData())
         def complete(j):
             self.active_id = j['id']
             self.refresh()
@@ -897,6 +946,40 @@ class MainWindow(QMainWindow):
         for row in range(self.history.rowCount()):
             i = self.history.item(row, 0)
             self.history.setRowHidden(row, bool(text and i and text not in i.text().lower()))
+        self.update_history_selection()
+
+    def selected_history_ids(self):
+        checked, selected = [], []
+        rows = {i.row() for i in self.history.selectionModel().selectedRows()}
+        for row in range(self.history.rowCount()):
+            entry = self.history.item(row, 0)
+            if not entry or self.history.isRowHidden(row):
+                continue
+            key = entry.data(Qt.ItemDataRole.UserRole)
+            if entry.checkState() == Qt.CheckState.Checked:
+                checked.append(key)
+            if row in rows:
+                selected.append(key)
+        return checked or selected
+
+    def update_history_selection(self, *_):
+        if hasattr(self, 'history_selected_label'):
+            self.history_selected_label.setText(f'已选择 {len(self.selected_history_ids())} 份')
+
+    def select_all_history(self):
+        self.history.blockSignals(True)
+        for row in range(self.history.rowCount()):
+            self.history.item(row, 0).setCheckState(Qt.CheckState.Unchecked if self.history.isRowHidden(row) else Qt.CheckState.Checked)
+        self.history.blockSignals(False)
+        self.update_history_selection()
+
+    def clear_history_selection(self):
+        self.history.clearSelection()
+        self.history.blockSignals(True)
+        for row in range(self.history.rowCount()):
+            self.history.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+        self.history.blockSignals(False)
+        self.update_history_selection()
 
     def continue_history(self):
         key = self.selected_history_id()
@@ -906,18 +989,21 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def remove_history(self):
-        key = self.selected_history_id()
-        if not key or self.busy:
+        keys = self.selected_history_ids()
+        if self.busy:
             return
-        name = self.store.jobs[key]['name']
-        result = QMessageBox.question(self, '删除本机记录', f'删除“{name}”在本应用中的副本与记录？\n\n原始文件与已导出文件保留。', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if not keys:
+            self.statusBar().showMessage('请先勾选或选中要删除的记录')
+            return
+        result = QMessageBox.question(self, '批量删除本机记录', f'删除所选 {len(keys)} 份档案在本应用中的副本与记录？\n\n原始文件与已导出文件保留', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if result == QMessageBox.StandardButton.Yes:
             def complete(_):
-                if self.active_id == key:
+                if self.active_id in keys:
                     self.active_id = None
                 self.refresh()
-                self.statusBar().showMessage('本机记录已删除。')
-            self.run_task('正在清理本机记录', lambda: self.store.remove(key), complete)
+                pending = self.store.pending_deletions
+                self.statusBar().showMessage(f'已删除 {len(keys)} 份本机记录' + (f'，{pending} 份副本被占用，将在下次启动时重试清理' if pending else ''))
+            self.run_task('正在清理本机记录', lambda: self.store.remove_many(keys), complete)
 
     def guide(self):
         QMessageBox.information(self, '归档 · 原生 Python 桌面版', '1. 添加或拖入 DOCX / DOC / WPS 文件。\n\n2. 在“段落识别”中核对主标题、层级、正文与落款。\n\n3. 一键修正格式，导出规范 DOCX 与完整检查报告。\n\n4. 补齐规范字体后，可通过本机 Word / WPS 生成 PDF。\n\n文档始终在本机处理，不覆盖原始文件。\n关闭窗口即可退出程序，无后台网页服务。')
@@ -927,6 +1013,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, '正在处理文件', '后台正在处理档案，请等待当前操作完成后关闭。')
             event.ignore()
         else:
+            if not self.generation.save_draft():
+                self.error('本机草稿未保存，请检查磁盘空间或目录权限后重试关闭')
+                event.ignore()
+                return
             event.accept()
 
 

@@ -19,15 +19,17 @@ class PublicSourceTests(unittest.TestCase):
     def test_public_source_excludes_private_resource_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ('app', 'assets/fonts', 'assets/reference', 'scripts', 'tests', 'docs'):
+            for name in ('app', 'assets/fonts', 'assets/reference', 'assets/generator/templates', 'scripts', 'tests', 'docs'):
                 (root / name).mkdir(parents=True, exist_ok=True)
             for name in ('assets/fonts/font.ttf', 'assets/reference/rules.pdf', 'assets/reference/assessment.docx',
-                         'assets/fonts/README.md', 'assets/reference/README.md', 'app/test.py'):
+                         'assets/fonts/README.md', 'assets/reference/README.md', 'assets/generator/templates/private.docx', 'assets/generator/templates.json', 'app/test.py'):
                 (root / name).write_text('test', encoding='utf-8')
             paths = [str(p.relative_to(root)).replace('\\', '/') for p, _ in source_files(root)]
         self.assertNotIn('assets/fonts/font.ttf', paths)
         self.assertNotIn('assets/reference/rules.pdf', paths)
         self.assertNotIn('assets/reference/assessment.docx', paths)
+        self.assertNotIn('assets/generator/templates/private.docx', paths)
+        self.assertNotIn('assets/generator/templates.json', paths)
         self.assertIn('assets/fonts/README.md', paths)
         self.assertIn('assets/reference/README.md', paths)
         self.assertIn('app/test.py', paths)
