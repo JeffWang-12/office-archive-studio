@@ -1,0 +1,15 @@
+.build/
+.local_data/
+archive-instance-*.json
+__pycache__/
+*.pyc
+release/
+release-native/
+*.spec
+.venv/
+docs/工作台预览.jpg
+public-source/
+assets/fonts/*
+!assets/fonts/README.md
+assets/reference/*
+!assets/reference/README.md
