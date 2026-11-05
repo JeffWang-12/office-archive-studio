@@ -32,7 +32,7 @@ from .profiles import ProfileStore, standard_for
 from .profile_ui import StandardsDialog
 from .generation_ui import GenerationPage
 
-VERSION = '2.2.0'
+VERSION = '2.2.1'
 ROLE_CHOICES = {k: v for k, v in LABELS.items() if k not in ('blank', 'table', 'object')}
 
 
@@ -1047,8 +1047,13 @@ def main():
     app.setFont(QFont('Microsoft YaHei UI', 10))
     app.setStyleSheet(STYLE)
     root = Path(args.data_dir) if args.data_dir else (Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'ArchiveStudio/records' if getattr(sys, 'frozen', False) else resource_root() / '.local_data')
-    root.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(filename=root / 'application.log', encoding='utf-8', level=logging.WARNING)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(filename=root / 'application.log', encoding='utf-8', level=logging.WARNING)
+        store = Store(root)
+    except OSError:
+        QMessageBox.warning(None, '启动失败', '记录目录不可写，请用 --data-dir 指定其他位置')
+        return 1
     lock = QLockFile(str(root / 'desktop.lock'))
     lock.setStaleLockTime(30000)
     if not lock.tryLock(100):
@@ -1056,7 +1061,7 @@ def main():
         return 0
     for font in (resource_root() / 'assets/fonts').glob('*.ttf'):
         QFontDatabase.addApplicationFont(str(font))
-    window = MainWindow(Store(root))
+    window = MainWindow(store)
     window.show()
     if args.smoke_test:
         from .smoke import run_smoke_test

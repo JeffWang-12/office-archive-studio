@@ -362,6 +362,11 @@ class GenerationPage(QWidget):
         return True
 
     def toggle_autosave(self, checked):
+        if self.host.busy:
+            self.autosave.blockSignals(True)
+            self.autosave.setChecked(not checked)
+            self.autosave.blockSignals(False)
+            return
         if not checked:
             answer = QMessageBox.question(self, '关闭草稿自动保存', '关闭后删除本机已保存的草稿及备份\n当前窗口的填写内容仍会保留，退出后不再恢复\n\n是否关闭？', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
@@ -380,6 +385,8 @@ class GenerationPage(QWidget):
             self.host.error(str(exc))
 
     def clear_draft(self, all_templates=False):
+        if self.host.busy:
+            return
         if not self.current_name:
             return
         caption = '全部文档类型的草稿' if all_templates else '当前文档类型的草稿'
@@ -402,6 +409,8 @@ class GenerationPage(QWidget):
             self.output_path.setText(str(self.library.output_directory))
 
     def import_drafts(self):
+        if self.host.busy:
+            return
         path, _ = QFileDialog.getOpenFileName(self, '选择旧版填写草稿或备份', '', '草稿文件 (*.json *.bak)')
         if not path:
             return
@@ -419,6 +428,8 @@ class GenerationPage(QWidget):
             self.host.error(str(exc))
 
     def export_drafts(self):
+        if self.host.busy:
+            return
         self.save_draft()
         path, _ = QFileDialog.getSaveFileName(self, '导出填写草稿备份（明文 JSON）', '填写草稿备份.json', '草稿文件 (*.json)')
         if path:
@@ -436,11 +447,15 @@ class GenerationPage(QWidget):
             self.host.error(str(exc))
 
     def import_library(self):
+        if self.host.busy:
+            return
         path = QFileDialog.getExistingDirectory(self, '选择本机模板资源文件夹')
         if path:
             self.host.run_task('正在导入模板资源', lambda: self.library.import_resources(path), lambda _: self.refresh_catalog())
 
     def add_template(self):
+        if self.host.busy:
+            return
         path, _ = QFileDialog.getOpenFileName(self, '添加含 {{ 占位符 }} 的 DOCX 模板', '', 'Word 模板 (*.docx)')
         if path:
             def completed(target):
@@ -451,11 +466,15 @@ class GenerationPage(QWidget):
             self.host.run_task('正在导入自定义模板', lambda: self.library.add_template(path), completed)
 
     def replace_custom_template(self):
+        if self.host.busy:
+            return
         path, _ = QFileDialog.getOpenFileName(self, '选择新的根目录自定义模板', '', 'Word 模板 (*.docx)')
         if path:
             self.host.run_task('正在更新自定义模板', lambda: self.library.replace_custom_template(path), lambda _: self.refresh_catalog('自定义模板（根目录模板.docx）'))
 
     def restore(self):
+        if self.host.busy:
+            return
         if QMessageBox.question(self, '恢复标准模板', '恢复七份标准模板？\n自定义模板、草稿和已生成文件会保留', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             def complete(count):
                 self.refresh_catalog()
@@ -463,7 +482,10 @@ class GenerationPage(QWidget):
             self.host.run_task('正在恢复标准模板', self.library.restore, complete)
 
     def focus_error(self, message):
-        key = next((f['name'] for f in self.catalog[self.current_name].get('fields', []) if f.get('label') and f['label'] in message), None)
+        spec = self.catalog.get(self.current_name)
+        if spec is None:
+            return
+        key = next((f['name'] for f in spec.get('fields', []) if f.get('label') and f['label'] in message), None)
         if not key and '照片' in message:
             key = 'photo_paths'
         if key in self.fields:
@@ -477,8 +499,12 @@ class GenerationPage(QWidget):
     def generate(self, checked=False, save_as=False):
         if self.host.busy or not self.current_name:
             return
-        name, values, embed = self.current_name, self.collect(), self.embed.isChecked()
-        spec = self.catalog[name]
+        name = self.current_name
+        spec = self.catalog.get(name)
+        if spec is None:
+            self.host.error('模板已失效，请刷新文档类型')
+            return
+        values, embed = self.collect(), self.embed.isChecked()
         try:
             validate_values(spec, values)
         except ValueError as exc:

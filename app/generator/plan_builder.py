@@ -8,7 +8,9 @@ from docx.shared import Pt
 
 from .layout import BODY_FONT, add_h1, add_h2, add_para, add_title
 
-CN_NUMBERS = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
+def cn_number(n):
+    numbers = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
+    return numbers[n - 1] if 1 <= n <= 12 else str(n)
 
 
 def build_plan(template_path: Path, output_path: Path, values: dict, monthly: bool) -> None:
@@ -47,7 +49,7 @@ def build_plan(template_path: Path, output_path: Path, values: dict, monthly: bo
             continue
         for index, task in enumerate(items):
             task_start = len(document.paragraphs)
-            number = CN_NUMBERS[index]
+            number = cn_number(index + 1)
             add_h2(document, f"（{number}）任务之{number}：{task['description']}")
             for goal_index, goal in enumerate(task["goals"], 1):
                 add_para(document, f"{goal_index}. 目标：{goal}", font=BODY_FONT, size=16)

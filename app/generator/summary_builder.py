@@ -44,7 +44,8 @@ def build_summary(template_path: Path, output_path: Path, values: dict, monthly:
                 font.close()
             return width_pt <= available_pt - 2
         cells = sum(2 if unicodedata.east_asian_width(char) in "FW" else 1 for char in text)
-        return cells <= 48
+        max_fullwidth = int(available_pt / 16)
+        return cells <= max_fullwidth * 2
 
     def add_photo(index: int):
         if index > len(photos) or index in used_photos:

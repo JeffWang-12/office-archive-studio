@@ -168,7 +168,8 @@ class Package:
         roles, used_title = [], False
         explicit_title = any(value == 'title' for value in overrides.values())
         has_kai = any(re.match(r'^[（(][一二三四五六七八九十百]+[）)]', text_of(p).strip()) for p in self.paragraphs)
-        date_indices = [i for i, p in enumerate(self.paragraphs) if re.fullmatch(r'\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日', text_of(p).strip())]
+        date_pattern = r'(?:\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})'
+        date_indices = [i for i, p in enumerate(self.paragraphs) if re.fullmatch(date_pattern, text_of(p).strip())]
         for i, p in enumerate(self.paragraphs):
             t = text_of(p).strip()
             style = (val(p, 'pPr/pStyle', default='') or '').lower()
@@ -181,7 +182,7 @@ class Package:
                 role = 'blank'
             elif re.match(r'^附件\s*\d*\s*$', t):
                 role = 'attachment'
-            elif re.fullmatch(r'\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日', t):
+            elif re.fullmatch(date_pattern, t):
                 role = 'date'
             elif i + 1 in date_indices and len(t) < 45:
                 role = 'signature'
@@ -345,7 +346,10 @@ class Package:
     def footer_valid(self):
         sections = self.document.xpath('.//w:sectPr', namespaces=NS)
         relmap = {r.get('Id'): r.get('Target') for r in self.rels}
-        inherited = None
+        # Compatibility fallback: seed leading sections from the nearest later default.
+        inherited = next((relmap.get(ref.get('{' + R + '}id'))
+                          for section in sections for ref in section.findall(tag('footerReference'))
+                          if ref.get(tag('type')) == 'default'), None)
         for s in sections:
             refs = s.findall(tag('footerReference'))
             for ref in refs:

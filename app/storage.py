@@ -22,8 +22,9 @@ OFFICE_LOCK = threading.Lock()
 
 def safe_name(name):
     value = name.replace('\\', '/').split('/')[-1]
-    value = ''.join(c for c in value if ord(c) >= 32 and c not in '<>:"/\\|?*').strip(' .')[:180]
-    return value or '未命名.docx'
+    value = ''.join(c for c in value if ord(c) >= 32 and c not in '<>:"/\\|?*').strip(' .')
+    stem, suffix = os.path.splitext(value)
+    return stem[:180 - len(suffix)] + suffix or '未命名.docx'
 
 
 class Store:
@@ -37,7 +38,10 @@ class Store:
         history_loaded = not path.exists()
         if path.exists():
             try:
-                for job in json.loads(path.read_text(encoding='utf-8')):
+                data = json.loads(path.read_text(encoding='utf-8'))
+                if not isinstance(data, list) or not all(isinstance(job, dict) for job in data):
+                    raise ValueError('history.json 必须为对象列表')
+                for job in data:
                     # A crash while staging a deletion must not discard a record
                     # that the atomically saved history still references.
                     key = job.get('id', '')
@@ -50,7 +54,7 @@ class Store:
                     if isinstance(job.get('id'), str) and len(job['id']) == 32 and all(c in '0123456789abcdef' for c in job['id']) and (self.root / job['id'] / 'original.docx').is_file():
                         self.jobs[job['id']] = job
                 history_loaded = True
-            except (ValueError, KeyError, OSError):
+            except (ValueError, KeyError, OSError, AttributeError, TypeError):
                 pass
         for staged in self.root.glob('.deleted-*'):
             if history_loaded and staged.is_dir() and not staged.is_symlink() and staged.resolve().parent == self.root.resolve():
@@ -62,7 +66,10 @@ class Store:
     def save(self):
         with self.lock:
             path = self.root / 'history.tmp'
-            path.write_text(json.dumps(list(self.jobs.values()), ensure_ascii=False), encoding='utf-8')
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(list(self.jobs.values()), ensure_ascii=False))
+                f.flush()
+                os.fsync(f.fileno())
             path.replace(self.root / 'history.json')
 
     def folder(self, key):
@@ -106,8 +113,8 @@ class Store:
 
     def analyze(self, key, options):
         with self.lock:
-            job = self.jobs[key]
             folder = self.folder(key)
+            job = self.jobs[key]
             # Reanalysis uses the immutable imported source and invalidates stale exports.
             report = Package((folder / 'original.docx').read_bytes(), job['name']).inspect(options)
             job.update(options=deepcopy(options), report=report, status='checked', fixedAt=None)
@@ -119,8 +126,8 @@ class Store:
 
     def fix(self, key):
         with self.lock:
-            job = self.jobs[key]
             folder = self.folder(key)
+            job = self.jobs[key]
             data, before, after = Package((folder / 'original.docx').read_bytes(), job['name']).repair(job['options'])
             (folder / 'corrected.docx').write_bytes(data)
             (folder / 'corrected.pdf').unlink(missing_ok=True)
@@ -130,6 +137,7 @@ class Store:
             return job
 
     def report(self, key):
+        self.folder(key)
         job = self.jobs[key]
         lines = ['归档 · 格式检查与修正记录', '=' * 38, f"文件：{job['name']}", f"检查时间：{job['created']}",
                  '适用规范：' + job['report'].get('standardName', '团内文件 · 通用规范'),
@@ -173,7 +181,12 @@ class Store:
             data = source.read_bytes()
         else:
             raise DocumentError('不支持的导出格式。')
-        target.write_bytes(data)
+        temporary = target.with_name(target.name + '.tmp')
+        try:
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
         return str(target)
 
     def export_bundle(self, keys, destination):
@@ -199,7 +212,12 @@ class Store:
         for job in self.jobs.values():
             if job.get('sourcePath') and target == Path(job['sourcePath']).resolve():
                 raise DocumentError('不能覆盖导入的原始文件。')
-        target.write_bytes(stream.getvalue())
+        temporary = target.with_name(target.name + '.tmp')
+        try:
+            temporary.write_bytes(stream.getvalue())
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
         return str(target)
 
     def generate_pdf(self, key, application=None):

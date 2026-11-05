@@ -46,29 +46,29 @@ def resource_root():
 
 
 def font_metadata(path):
-    data = Path(path).read_bytes()
-    count = struct.unpack_from('>H', data, 4)[0]
-    tables = {}
-    for i in range(count):
-        off = 12 + 16 * i
-        name, _, offset, length = struct.unpack_from('>4sIII', data, off)
-        tables[name] = (offset, length)
-    off = tables[b'name'][0]
-    _, count, strings = struct.unpack_from('>HHH', data, off)
-    names = []
-    for i in range(count):
-        platform, encoding, language, name_id, length, offset = struct.unpack_from('>HHHHHH', data, off + 6 + i * 12)
-        if name_id not in (1, 4, 6):
-            continue
-        raw = data[off + strings + offset:off + strings + offset + length]
-        try:
+    try:
+        data = Path(path).read_bytes()
+        count = struct.unpack_from('>H', data, 4)[0]
+        tables = {}
+        for i in range(count):
+            off = 12 + 16 * i
+            name, _, offset, length = struct.unpack_from('>4sIII', data, off)
+            tables[name] = (offset, length)
+        off = tables[b'name'][0]
+        _, count, strings = struct.unpack_from('>HHH', data, off)
+        names = []
+        for i in range(count):
+            platform, encoding, language, name_id, length, offset = struct.unpack_from('>HHHHHH', data, off + 6 + i * 12)
+            if name_id not in (1, 4, 6):
+                continue
+            raw = data[off + strings + offset:off + strings + offset + length]
             name = raw.decode('utf-16-be' if platform in (0, 3) else 'mac-roman')
             if name not in names:
                 names.append(name)
-        except UnicodeError:
-            pass
-    embed = struct.unpack_from('>H', data, tables[b'OS/2'][0] + 8)[0] if b'OS/2' in tables else None
-    return {'names': names, 'embeddingFlags': embed}
+        embed = struct.unpack_from('>H', data, tables[b'OS/2'][0] + 8)[0] if b'OS/2' in tables else None
+        return {'names': names, 'embeddingFlags': embed}
+    except (struct.error, KeyError, IndexError, UnicodeError, OSError):
+        return {'names': [], 'embeddingFlags': None}
 
 
 def environment():
@@ -98,7 +98,7 @@ def environment():
                 pass
     font_list = font_catalog(resource_root() / 'assets' / 'fonts', installed)
     return {'os': 'Windows' if os.name == 'nt' else sys.platform, 'office': office,
-            'fonts': font_list, 'local': True, 'version': '2.2.0', 'canConvert': bool(office)}
+            'fonts': font_list, 'local': True, 'version': '2.2.1', 'canConvert': bool(office)}
 
 
 def office_convert(source, output, mode='docx', application=None):
@@ -112,8 +112,12 @@ def office_convert(source, output, mode='docx', application=None):
     powershell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe'
     request = json.dumps({'source': str(Path(source).resolve()), 'output': str(Path(output).resolve()),
                           'mode': mode, 'application': app}, ensure_ascii=False)
+    script = resource_root() / 'scripts' / 'office.ps1'
+    if not script.is_file() or script.stat().st_size == 0:
+        raise ValueError('转换脚本缺失，请重新安装')
+    # TODO: 后续可评估改用 RemoteSigned，本批保留 Bypass。
     result = subprocess.run([str(powershell), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                             '-File', str(resource_root() / 'scripts' / 'office.ps1')],
+                             '-File', str(script)],
                             input=request, encoding='utf-8', capture_output=True, timeout=120,
                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     try:
